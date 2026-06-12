@@ -10,6 +10,7 @@ Material tags identify each volume in the DAGMC geometry. They connect your CAD 
 | [Assembly Names](assembly_names.md) | Use CadQuery assembly part names | CadQuery assemblies |
 | [Assembly Materials](assembly_materials.md) | Use `cq.Material` objects | CadQuery 2.6.1+ |
 | [GMSH Physical Groups](gmsh_physical_groups.md) | Extract from GMSH mesh | Pre-existing meshes |
+| [Extract from Part Names](extract_from_names.md) | Derive tags from STEP part names using a delimiter | CAD_to_OpenMC-style workflows |
 
 ## Quick Comparison
 
