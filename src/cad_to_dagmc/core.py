@@ -1220,6 +1220,22 @@ class CadToDagmc:
         self.parts = []
         self.material_tags = []
 
+    @property
+    def export_material_tag_list(self) -> list[str]:
+        """Returns a copy of the material tags currently assigned to the model."""
+        return self.material_tags.copy()
+
+    @property
+    def set_material_tag_list(self) -> list[str]:
+        """Returns a copy of the current material tags."""
+        return self.material_tags.copy()
+
+    @set_material_tag_list.setter
+    def set_material_tag_list(self, material_tags: list[str]) -> None:
+        """Replaces the current material tags after validation."""
+        check_material_tags(material_tags, self.parts)
+        self.material_tags = list(material_tags)
+
     def add_stp_file(
         self,
         filename: str,

@@ -84,6 +84,30 @@ model.add_stp_file(
 
 See [STEP Files](../inputs/step_files.md) for more details on using assembly names with STEP files.
 
+## Editing Exported Tags
+
+If tags were created automatically, you can export a copy, edit it, and set the updated list back onto the model:
+
+<!--pytest-codeblocks:skip-->
+```python
+from cad_to_dagmc import CadToDagmc
+
+model = CadToDagmc()
+model.add_stp_file(
+    filename="geometry.step",
+    material_tags="assembly_names",
+)
+
+material_tags = model.export_material_tag_list
+material_tags[0] = "breeder"
+material_tags[1] = "multiplier"
+
+model.set_material_tag_list = material_tags
+model.export_dagmc_h5m_file()
+```
+
+The replacement list is validated in the same way as `material_tags=` when geometry is first added, so it still needs one string per volume.
+
 ## Reserved Tag Names
 
 :::{warning}
