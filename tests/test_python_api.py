@@ -254,6 +254,36 @@ def test_add_stp_file_returned_volumes():
     assert vols == 2
 
 
+def test_export_material_tag_list_returns_copy():
+    box = cq.Workplane().box(1, 1, 1)
+
+    model = CadToDagmc()
+    model.add_cadquery_object(box, material_tags=["mat1"])
+
+    exported_tags = model.export_material_tag_list
+    exported_tags[0] = "changed"
+
+    assert model.material_tags == ["mat1"]
+    assert model.export_material_tag_list == ["mat1"]
+
+
+def test_set_material_tag_list_validates_before_replacing():
+    assembly = cq.Assembly()
+    assembly.add(cq.Workplane().box(1, 1, 1))
+    assembly.add(cq.Workplane().box(1, 1, 1).translate((5, 0, 0)))
+
+    model = CadToDagmc()
+    model.add_cadquery_object(assembly, material_tags=["mat1", "mat2"])
+
+    model.set_material_tag_list = ["steel", "water"]
+    assert model.material_tags == ["steel", "water"]
+
+    with pytest.raises(ValueError):
+        model.set_material_tag_list = ["only_one_tag"]
+
+    assert model.material_tags == ["steel", "water"]
+
+
 @pytest.mark.parametrize("meshing_backend", ["cadquery", "gmsh", "cad-to-dagmc-mesher"])
 def test_export_dagmc_h5m_file_handles_paths_folders_strings(meshing_backend, tmp_path):
     """Checks that a h5m file is created with various path formats"""

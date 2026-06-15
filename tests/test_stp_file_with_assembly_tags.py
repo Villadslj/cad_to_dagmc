@@ -51,6 +51,39 @@ def test_stp_file_with_assembly_names():
         assert "mat:steel" in mat_values
 
 
+def test_stp_file_with_assembly_names_can_replace_exported_tags():
+    """Test that exported assembly-derived tags can be edited and reapplied."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        stp_file = Path(tmpdir) / "test_assembly.stp"
+        h5m_file = Path(tmpdir) / "dagmc.h5m"
+
+        sphere = cq.Workplane().sphere(5)
+        box = cq.Workplane().moveTo(15, 0).box(5, 5, 5)
+
+        assembly = cq.Assembly()
+        assembly.add(sphere, name="tungsten")
+        assembly.add(box, name="steel")
+        assembly.save(str(stp_file), exportType="STEP")
+
+        model = CadToDagmc()
+        model.add_stp_file(
+            filename=str(stp_file),
+            material_tags="assembly_names",
+        )
+
+        exported_tags = model.export_material_tag_list
+        assert exported_tags == ["tungsten", "steel"]
+
+        exported_tags[0] = "edited_locally"
+        assert model.export_material_tag_list == ["tungsten", "steel"]
+
+        model.set_material_tag_list = ["breeder", "multiplier"]
+        model.export_dagmc_h5m_file(filename=str(h5m_file))
+
+        vol_mats = get_volumes_and_materials_from_h5m(str(h5m_file))
+        assert set(vol_mats.values()) == {"mat:breeder", "mat:multiplier"}
+
+
 @pytest.mark.skip(
     reason="Reading materials from STEP files not yet supported - awaiting CadQuery release",
 )
