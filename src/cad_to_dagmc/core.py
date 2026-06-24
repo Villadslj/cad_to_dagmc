@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import Iterable
+import re
 import cadquery as cq
 import gmsh
 import numpy as np
@@ -935,6 +936,93 @@ def get_ids_from_imprinted_assembly(solid_id_dict):
     return ids
 
 
+def extract_material_tag_from_name(
+    name: str,
+    delimiter_pattern: str = r"[\s_@]+",
+    ignore_prefixes: list[str] | None = None,
+    default_tag: str | None = None,
+) -> str:
+    """Extract a material tag from a STEP part name using a delimiter rule.
+
+    Splits the part name using the given delimiter pattern and returns the first
+    non-empty token as the material tag. This mimics CAD_to_OpenMC-style workflows
+    where names such as ``ss_watertank`` map to material tag ``ss``.
+
+    Args:
+        name: the STEP part/solid name.
+        delimiter_pattern: a regular expression pattern used to split the name.
+            Defaults to ``r"[\\s_@]+"``, which splits on whitespace, underscores,
+            and at-signs.
+        ignore_prefixes: an optional list of prefix strings. If the stripped name
+            starts with any of these prefixes, the ``default_tag`` is used instead.
+        default_tag: a fallback material tag used when the name matches an ignore
+            prefix or when no token can be extracted.
+
+    Returns:
+        The extracted material tag string.
+
+    Raises:
+        ValueError: if no material tag can be extracted and no ``default_tag``
+            is provided.
+    """
+    stripped = name.strip()
+
+    if ignore_prefixes:
+        for prefix in ignore_prefixes:
+            if stripped.startswith(prefix):
+                if default_tag is not None:
+                    return default_tag
+                raise ValueError(
+                    f"Part name '{name}' matches ignore prefix '{prefix}' "
+                    f"but no default_tag was provided."
+                )
+
+    tokens = re.split(delimiter_pattern, stripped)
+    # Filter out empty tokens
+    tokens = [t for t in tokens if t]
+
+    if tokens:
+        return tokens[0]
+
+    if default_tag is not None:
+        return default_tag
+
+    raise ValueError(
+        f"Could not extract a material tag from part name '{name}' "
+        f"using delimiter pattern '{delimiter_pattern}' and no default_tag was provided."
+    )
+
+
+def extract_material_tags_from_names(
+    names: list[str],
+    delimiter_pattern: str = r"[\s_@]+",
+    ignore_prefixes: list[str] | None = None,
+    default_tag: str | None = None,
+) -> list[str]:
+    """Extract material tags from a list of STEP part names.
+
+    Applies :func:`extract_material_tag_from_name` to each name in the list.
+
+    Args:
+        names: list of STEP part/solid names.
+        delimiter_pattern: a regular expression pattern used to split names.
+        ignore_prefixes: optional list of prefix strings to ignore.
+        default_tag: fallback material tag.
+
+    Returns:
+        A list of extracted material tag strings in the same order as the input names.
+    """
+    return [
+        extract_material_tag_from_name(
+            name,
+            delimiter_pattern=delimiter_pattern,
+            ignore_prefixes=ignore_prefixes,
+            default_tag=default_tag,
+        )
+        for name in names
+    ]
+
+
 def check_material_tags(material_tags, iterable_solids):
     if material_tags:
         if len(material_tags) != len(iterable_solids):
@@ -1241,6 +1329,10 @@ class CadToDagmc:
         filename: str,
         scale_factor: float = 1.0,
         material_tags: list[str] | str | None = None,
+        extract_material_tags_from_part_names: bool = False,
+        name_delimiter_pattern: str = r"[\s_@]+",
+        ignore_prefixes: list[str] | None = None,
+        default_tag: str | None = None,
     ) -> int:
         """Loads the parts from stp file into the model.
 
@@ -1257,10 +1349,85 @@ class CadToDagmc:
                 used to increase the size or decrease the size of the geometry.
                 Useful when converting the geometry to cm for use in neutronics
                 simulations.
+            extract_material_tags_from_part_names: if True, material tags are
+                derived from the STEP part names using the delimiter rule.
+                Cannot be used together with explicit ``material_tags``.
+                This mimics CAD_to_OpenMC-style workflows where names such as
+                ``ss_watertank`` map to material tag ``ss``.
+            name_delimiter_pattern: a regular expression pattern used to split
+                part names when extracting material tags. Defaults to
+                ``r"[\\s_@]+"``, which splits on whitespace, underscores, and
+                at-signs.
+            ignore_prefixes: an optional list of prefix strings. If a part name
+                starts with any of these prefixes, the ``default_tag`` is used.
+            default_tag: a fallback material tag used when extraction fails or
+                a part name matches an ignore prefix.
 
         Returns:
             int: number of volumes in the stp file.
+
+        Raises:
+            ValueError: if both ``material_tags`` and
+                ``extract_material_tags_from_part_names=True`` are provided.
         """
+        if extract_material_tags_from_part_names and material_tags is not None:
+            raise ValueError(
+                "Cannot use both 'material_tags' and "
+                "'extract_material_tags_from_part_names=True'. "
+                "Please use one or the other."
+            )
+
+        # If extracting material tags from part names, load as assembly to get names
+        if extract_material_tags_from_part_names:
+            assembly = cq.Assembly()
+            importStepAssembly(assembly, str(filename))
+            if scale_factor != 1.0:
+                scaled_assembly = cq.Assembly()
+                for child in assembly.children:
+                    scaled_shape = child.obj.scale(scale_factor)
+                    scaled_assembly.add(
+                        scaled_shape,
+                        name=child.name,
+                        color=child.color,
+                        loc=child.loc,
+                    )
+                    if hasattr(child, "material") and child.material is not None:
+                        scaled_assembly.children[-1].material = child.material
+                assembly = scaled_assembly
+
+            # Collect names from leaf children, repeating per solid
+            names = []
+            for child in _get_all_leaf_children(assembly):
+                child_shape = child.toCompound() if hasattr(child, 'toCompound') else child.obj
+                if child_shape is not None:
+                    child_solids = child_shape.Solids() if hasattr(child_shape, 'Solids') else []
+                else:
+                    child_solids = []
+                for _ in child_solids:
+                    names.append(child.name)
+
+            extracted_tags = extract_material_tags_from_names(
+                names,
+                delimiter_pattern=name_delimiter_pattern,
+                ignore_prefixes=ignore_prefixes,
+                default_tag=default_tag,
+            )
+
+            cadquery_compound = assembly.toCompound()
+            iterable_solids = cadquery_compound.Solids()
+
+            if scale_factor == 1.0:
+                scaled_iterable_solids = iterable_solids
+            else:
+                scaled_iterable_solids = [
+                    part.scale(scale_factor) for part in iterable_solids
+                ]
+
+            check_material_tags(extracted_tags, scaled_iterable_solids)
+            self.material_tags = self.material_tags + extracted_tags
+            self.parts = self.parts + scaled_iterable_solids
+            return len(scaled_iterable_solids)
+
         # If using assembly_names or assembly_materials, try to load as assembly
         if material_tags in ("assembly_names", "assembly_materials"):
             assembly = cq.Assembly()
